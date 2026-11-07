@@ -10,6 +10,15 @@ API_KEY="ollama"          # значение не важно, но поле об
 MODEL = "gemma4:e4b"
 # MODEL = "qwen3.5:9b"
 
+def print_usage(usage) -> None:
+    if usage is None:
+        print("Провайдер не вернул статистику токенов")
+        return
+
+    print(f"Входные токены: {usage.prompt_tokens}")
+    print(f"Выходные токены: {usage.completion_tokens}")
+    print(f"Всего токенов: {usage.total_tokens}")
+
 
 def summarize_request(client: OpenAI, user_text: str) -> None:
     """Кратко пересказывает обращение и печатает метрики запроса."""
@@ -46,11 +55,7 @@ def summarize_request(client: OpenAI, user_text: str) -> None:
     print(f"Завершение: {choice.finish_reason}")
     print(f"Время: {elapsed_seconds:.2f} с")
 
-    if response.usage is not None:
-        print(f"Входные токены: {response.usage.prompt_tokens}")
-        print(f"Выходные токены: {response.usage.completion_tokens}")
-        print(f"Всего токенов: {response.usage.total_tokens}")
-
+    print_usage(response.usage)
     print(f"ID ответа: {response.id}")
 
 
