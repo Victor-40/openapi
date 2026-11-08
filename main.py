@@ -1,16 +1,11 @@
-# import os
 from time import perf_counter
 
-# from dotenv import load_dotenv
+import openai
 from openai import OpenAI
+from pydantic import ValidationError
 
-BASE_URL = "http://localhost:11434/v1"
-API_KEY="ollama"          # значение не важно, но поле обязательно
+from config import Settings
 
-MODEL = "gemma4:e4b"
-# MODEL = "qwen3.5:9b"
-TEMPERATURE = 0.2
-MAX_OUTPUT_TOKENS = 80
 
 SYSTEM_INSTRUCTION = (
     "Ты помогаешь оператору службы поддержки. "
@@ -56,7 +51,7 @@ def validate_summary(summary: str | None) -> str:
     return cleaned
 
 
-def summarize_request(client: OpenAI, user_text: str) -> None:
+def summarize_request(client: OpenAI, user_text: str, settings: Settings) -> None:
     """Кратко пересказывает обращение и печатает метрики запроса."""
     text = user_text.strip()
     if not text:
@@ -66,10 +61,10 @@ def summarize_request(client: OpenAI, user_text: str) -> None:
     started_at = perf_counter()
 
     response = client.chat.completions.create(
-        model=MODEL,
+        model=settings.model,
         messages=build_messages(text),
-        temperature=TEMPERATURE,
-        max_completion_tokens=MAX_OUTPUT_TOKENS,
+        temperature=settings.temperature,
+        max_completion_tokens=settings.max_output_tokens,
     )
         
     elapsed_seconds = perf_counter() - started_at
@@ -77,8 +72,8 @@ def summarize_request(client: OpenAI, user_text: str) -> None:
 
     if choice.finish_reason == "length":
         print(
-            "Ответ модели остановлен из-за ограничения длины. "
-            "Увеличьте MAX_OUTPUT_TOKENS или сократите задачу."
+            "Ответ модели остановлен из-за ограничения длины: "
+            f"{settings.max_output_tokens} токенов."
         )
         return
 
@@ -109,15 +104,25 @@ def summarize_request(client: OpenAI, user_text: str) -> None:
 
 
 def main() -> None:
+    try:
+        settings = Settings()
+    except ValidationError as error:
+        print("Ошибка конфигурации:")
+        for issue in error.errors():
+            field = ".".join(str(part) for part in issue["loc"])
+            print(f"- {field}: {issue['msg']}")
+        return
 
     client = OpenAI(
-        base_url=BASE_URL,
-        api_key=API_KEY,
+        base_url=str(settings.base_url),
+        api_key=settings.llm_api_key.get_secret_value(),
     )
 
-    user_text = input("Введите текст обращения: ")
-    summarize_request(client, user_text)
+    print(f"Окружение: {settings.app_env}")
+    print(f"Модель: {settings.model}")
 
+    user_text = input("Введите текст обращения: ")
+    summarize_request(client, user_text, settings)
 
 if __name__ == "__main__":
     main()
