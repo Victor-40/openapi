@@ -4,6 +4,7 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.llm.client import LLMClient, LLMResult
+from app.llm.errors import LLMClientError
 
 
 SYSTEM_INSTRUCTION = (
@@ -59,7 +60,11 @@ def summarize_request(client: LLMClient, user_text: str, settings: Settings) -> 
 
     started_at = perf_counter()
 
-    result = client.generate(build_messages(text))
+    try:
+        result = client.generate(build_messages(text))
+    except LLMClientError as error:
+        print(f"Не удалось получить ответ модели: {error}")
+        return
         
     elapsed_seconds = perf_counter() - started_at
     print_usage(result)
