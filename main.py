@@ -10,6 +10,14 @@ API_KEY="ollama"          # значение не важно, но поле об
 MODEL = "gemma4:e4b"
 # MODEL = "qwen3.5:9b"
 
+SYSTEM_INSTRUCTION = (
+    "Ты помогаешь оператору службы поддержки. "
+    "Кратко пересказывай обращение одним предложением. "
+    "Используй только факты из обращения. "
+    "Не придумывай суммы, даты, причины и действия. "
+    "Если данных недостаточно, прямо сообщай об этом."
+)
+
 def print_usage(usage) -> None:
     if usage is None:
         print("Провайдер не вернул статистику токенов")
@@ -19,6 +27,18 @@ def print_usage(usage) -> None:
     print(f"Выходные токены: {usage.completion_tokens}")
     print(f"Всего токенов: {usage.total_tokens}")
 
+
+def build_messages(user_text: str) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": SYSTEM_INSTRUCTION,
+        },
+        {
+            "role": "user",
+            "content": f"Обращение:\n{user_text}",
+        },
+    ]
 
 def summarize_request(client: OpenAI, user_text: str) -> None:
     """Кратко пересказывает обращение и печатает метрики запроса."""
@@ -31,16 +51,7 @@ def summarize_request(client: OpenAI, user_text: str) -> None:
 
     response = client.chat.completions.create(
         model=MODEL,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    "Сформулируй краткое содержание обращения в одном "
-                    "предложении. Не добавляй факты, которых нет в тексте.\n\n"
-                    f"Обращение: {text}"
-                ),
-            }
-        ],
+        messages=build_messages(text),
     )
         
     elapsed_seconds = perf_counter() - started_at
