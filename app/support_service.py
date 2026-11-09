@@ -5,12 +5,28 @@ from app.llm.client import LLMClient, Message
 from app.llm.errors import LLMClientError
 
 
-SYSTEM_INSTRUCTION = (
-    "Ты помощник службы поддержки. "
-    "Кратко перескажи обращение одним предложением. "
-    "Не добавляй факты, которых нет в обращении."
-)
+DEVELOPER_INSTRUCTION = """
+Ты помогаешь оператору службы поддержки кратко пересказывать
+обращения клиентов.
 
+Цель:
+Сформулируй основную проблему клиента одним предложением.
+
+Правила:
+- Используй только факты, явно указанные в обращении.
+- Если они указаны, сохраняй номер заказа, дату и название товара.
+- Не добавляй советы, решения, обещания и оценки.
+- Если деталь отсутствует или неясна, опусти ее.
+
+Порядок работы:
+1. Определи основную проблему клиента.
+2. Выбери только факты, необходимые для понимания проблемы.
+3. Удали приветствия, повторы и второстепенные подробности.
+4. Сформулируй итоговый ответ в требуемом формате.
+
+Формат ответа:
+Одно самостоятельное предложение без заголовка, списка и вступления.
+""".strip()
 
 class SupportServiceError(RuntimeError):
     pass
@@ -71,15 +87,19 @@ class SupportService:
     def _build_messages(user_text: str) -> list[Message]:
         return [
             {
-                "role": "system",
-                "content": SYSTEM_INSTRUCTION,
+                "role": "developer",
+                "content": DEVELOPER_INSTRUCTION,
             },
             {
                 "role": "user",
-                "content": user_text,
+                "content": (
+                    "<customer_request>\n"
+                    f"{user_text}\n"
+                    "</customer_request>"
+                ),
             },
         ]
-
+    
     @staticmethod
     def _validate_summary(summary: str | None) -> str:
         if summary is None:
