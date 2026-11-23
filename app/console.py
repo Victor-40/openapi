@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from app.chat_service import (
     ChatReply,
     ChatService,
@@ -8,7 +10,6 @@ try:
     import readline
 except ImportError:
     pass
-
 
 def print_usage(result: ChatReply) -> None:
     if result.total_tokens is None:
@@ -21,26 +22,42 @@ def print_usage(result: ChatReply) -> None:
 
 
 def run_console(
-        service: ChatService,
-        app_env: str,
-        configured_model: str,
+    service: ChatService,
+    app_env: str,
+    configured_model: str,
 ) -> None:
     print(f"Окружение: {app_env}")
     print(f"Настроенная модель: {configured_model}")
-    print("Для выхода введите /exit.")
+
+    session_id = uuid4().hex
+    print(f"Session ID: {session_id}")
+    print("Команды: /new — новый диалог, /exit — выход.")
 
     while True:
         user_text = input("\nВы: ")
-        if user_text.strip() == "/exit":
+        command = user_text.strip()
+
+        if command == "/exit":
             return
 
+        if command == "/new":
+            service.reset_session(session_id)
+            session_id = uuid4().hex
+            print(f"Новый Session ID: {session_id}")
+            continue
+
         try:
-            result = service.reply(user_text)
+            result = service.reply(session_id, user_text)
         except ChatServiceError as error:
             print(f"Ошибка чата: {error}")
             continue
 
         print(f"Assistant: {result.text}")
+        print(f"Session ID ответа: {result.session_id}")
+        print(f"Сообщений в истории: {result.history_messages}")
+        print(f"Сообщений истории в запросе: {result.context_history_messages}")
+        print(f"Сообщений истории отброшено: {result.removed_history_messages}")
+        print(f"Оценка входных токенов до запроса: {result.estimated_prompt_tokens}")
         print(f"Промпт: {result.prompt_id}@{result.prompt_version}")
         print(f"Время ответа: {result.elapsed_seconds:.2f} с")
         print_usage(result)

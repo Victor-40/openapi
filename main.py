@@ -5,6 +5,8 @@ from app.console import run_console
 from app.llm.client import LLMClient
 # from app.support_service import SupportService
 from app.chat_service import ChatService
+from app.chat_history import SlidingWindowHistory, TokenCounter
+
 
 
 def main() -> None:
@@ -18,7 +20,15 @@ def main() -> None:
         return
 
     llm_client = LLMClient(settings)
-    chat_service = ChatService(llm_client)
+    token_counter = TokenCounter()
+    history_policy = SlidingWindowHistory(
+        token_counter=token_counter,
+        input_token_budget=settings.chat_input_token_budget,
+    )
+    chat_service = ChatService(
+        llm_client=llm_client,
+        history_policy=history_policy,
+    )
     try:
         run_console(
             chat_service,

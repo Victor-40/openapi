@@ -1,6 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import Lock
 from time import perf_counter
 
+from app.chat_history import (
+    ChatHistoryError,
+    SlidingWindowHistory,
+)
 from app.llm.client import LLMClient, Message
 from app.llm.errors import LLMClientError
 from app.prompts.support_chat import SUPPORT_CHAT_PROMPT
@@ -16,6 +21,11 @@ class ChatServiceError(RuntimeError):
 @dataclass(frozen=True)
 class ChatReply:
     text: str
+    session_id: str
+    history_messages: int
+    context_history_messages: int
+    removed_history_messages: int
+    estimated_prompt_tokens: int
     model: str
     prompt_id: str
     prompt_version: str
@@ -26,38 +36,84 @@ class ChatReply:
     response_id: str
 
 
-class ChatService:
-    def __init__(self, llm_client: LLMClient) -> None:
-        self._llm_client = llm_client
+@dataclass
+class ChatSession:
+    messages: list[Message] = field(default_factory=list)
+    lock: Lock = field(default_factory=Lock)
 
-    def reply(self, user_text: str) -> ChatReply:
+
+class ChatService:
+    def __init__(
+        self,
+        llm_client: LLMClient,
+        history_policy: SlidingWindowHistory,
+    ) -> None:
+        self._llm_client = llm_client
+        self._history_policy = history_policy
+        self._sessions: dict[str, ChatSession] = {}
+        self._sessions_lock = Lock()
+
+    def reply(
+        self,
+        session_id: str,
+        user_text: str,
+    ) -> ChatReply:
+        session_key = self._normalize_session_id(session_id)
+
         text = user_text.strip()
         if not text:
             raise ChatServiceError("Сообщение не должно быть пустым.")
 
-        messages = self._build_messages(text)
+        session = self._get_or_create_session(session_key)
 
-        started_at = perf_counter()
-        try:
-            llm_result = self._llm_client.generate(messages)
-        except LLMClientError as error:
-            raise ChatServiceError(
-                f"Не удалось получить ответ модели: {error}"
-            ) from error
-        elapsed_seconds = perf_counter() - started_at
+        with session.lock:
+            developer_message = self._build_developer_message()
+            user_message = self._build_user_message(text)
 
-        if llm_result.finish_reason == "length":
-            raise ChatServiceError("Ответ остановлен из-за ограничения длины.")
-        if llm_result.finish_reason != "stop":
-            raise ChatServiceError(
-                "Модель не вернула готовый ответ. "
-                f"Причина завершения: {llm_result.finish_reason}."
-            )
+            try:
+                prepared = self._history_policy.prepare(
+                    developer_message=developer_message,
+                    history=session.messages,
+                    user_message=user_message,
+                )
+            except ChatHistoryError as error:
+                raise ChatServiceError(
+                    f"Не удалось подготовить историю: {error}"
+                ) from error
 
-        reply_text = self._validate_reply(llm_result.text)
+            started_at = perf_counter()
+            try:
+                llm_result = self._llm_client.generate(prepared.messages)
+            except LLMClientError as error:
+                raise ChatServiceError(
+                    f"Не удалось получить ответ модели: {error}"
+                ) from error
+            elapsed_seconds = perf_counter() - started_at
+
+            if llm_result.finish_reason == "length":
+                raise ChatServiceError("Ответ остановлен из-за ограничения длины.")
+            if llm_result.finish_reason != "stop":
+                raise ChatServiceError(
+                    "Модель не вернула готовый ответ. "
+                    f"Причина завершения: {llm_result.finish_reason}."
+                )
+
+            reply_text = self._validate_reply(llm_result.text)
+
+            assistant_message: Message = {
+                "role": "assistant",
+                "content": reply_text,
+            }
+            session.messages.extend([user_message, assistant_message])
+            history_messages = len(session.messages)
 
         return ChatReply(
             text=reply_text,
+            session_id=session_key,
+            history_messages=history_messages,
+            context_history_messages=prepared.context_history_messages,
+            removed_history_messages=prepared.removed_history_messages,
+            estimated_prompt_tokens=prepared.estimated_tokens,
             model=llm_result.model,
             prompt_id=SUPPORT_CHAT_PROMPT.prompt_id,
             prompt_version=SUPPORT_CHAT_PROMPT.version,
@@ -68,22 +124,53 @@ class ChatService:
             response_id=llm_result.response_id,
         )
 
+    def reset_session(self, session_id: str) -> None:
+        session_key = self._normalize_session_id(session_id)
+
+        with self._sessions_lock:
+            session = self._sessions.get(session_key)
+
+        if session is None:
+            return
+
+        with session.lock:
+            session.messages.clear()
+
+    def _get_or_create_session(
+        self,
+        session_id: str,
+    ) -> ChatSession:
+        with self._sessions_lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                session = ChatSession()
+                self._sessions[session_id] = session
+            return session
+
     @staticmethod
-    def _build_messages(user_text: str) -> list[Message]:
-        return [
-            {
-                "role": "developer",
-                "content": CHAT_INSTRUCTION,
-            },
-            {
-                "role": "user",
-                "content": (
-                    "<customer_message>\n"
-                    f"{user_text}\n"
-                    "</customer_message>"
-                ),
-            },
-        ]
+    def _normalize_session_id(session_id: str) -> str:
+        session_key = session_id.strip()
+        if not session_key:
+            raise ChatServiceError("Session ID не должен быть пустым.")
+        return session_key
+
+    @staticmethod
+    def _build_developer_message() -> Message:
+        return {
+            "role": "developer",
+            "content": CHAT_INSTRUCTION,
+        }
+
+    @staticmethod
+    def _build_user_message(user_text: str) -> Message:
+        return {
+            "role": "user",
+            "content": (
+                "<customer_message>\n"
+                f"{user_text}\n"
+                "</customer_message>"
+            ),
+        }
 
     @staticmethod
     def _validate_reply(reply: str | None) -> str:
