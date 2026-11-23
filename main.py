@@ -6,7 +6,9 @@ from app.llm.client import LLMClient
 # from app.support_service import SupportService
 from app.chat_service import ChatService
 from app.chat_history import SlidingWindowHistory, TokenCounter
-
+from app.conversation_summary_service import (
+    ConversationSummaryService,
+)
 
 
 def main() -> None:
@@ -25,10 +27,14 @@ def main() -> None:
         token_counter=token_counter,
         input_token_budget=settings.chat_input_token_budget,
     )
+
+    summary_service = ConversationSummaryService(llm_client)
     chat_service = ChatService(
         llm_client=llm_client,
         history_policy=history_policy,
+        summary_service=summary_service,
     )
+    
     try:
         run_console(
             chat_service,
